@@ -47,8 +47,8 @@
 
 (define-syntax acl
   (syntax-rules (-)
-    [(acl grant start - end) (acl-struct (quote grant) (cons start end))]
-    [(acl grant port) (acl-struct (quote grant) (symbol->ports (quote port)))]))
+    [(acl grant start - end) (acl-struct grant (cons start end))]
+    [(acl grant port) (acl-struct grant (symbol->ports (quote port)))]))
 
 (define-syntax acl-list
   (syntax-rules ()
@@ -57,19 +57,19 @@
 
 
 (define-syntax-rule (secgroup group [inbound ...] [outbound ...])
-  (sg-struct (quote group) (acl-list inbound ...) (acl-list outbound ...)))
+  (sg-struct group (acl-list inbound ...) (acl-list outbound ...)))
 
 (define-syntax-rule 
   (config [(group inbound outbound) ...] [(name sg) ...])
-  (config-struct (apply hash (flatten (zip (list world (quote group) ...) (list world-secgroup (secgroup group inbound outbound) ...))))
-                 (apply hash (flatten (zip (list (quote name) ...) (list (instance (quote name) (quote sg)) ...))))))
+  (config-struct (apply hash (flatten (zip (list world group ...) (list world-secgroup (secgroup group inbound outbound) ...))))
+                 (apply hash (flatten (zip (list name ...) (list (instance name sg) ...))))))
 
 ;;---------------------------------------------------------------------------------------------------------------------------------------------------
 
 (define world 'any) ; Designate a thing to be outside
 
 (define world-secgroup 
-  (secgroup world [(any 1-65535)] [(any 1-65535)]))
+  (secgroup world [(world 1-65535)] [(world 1-65535)]))
 
 
 
@@ -110,13 +110,13 @@
 
 (define test-config 
   (config
-   [(frontend
-     [(frontend 1-65535)
-     (any 22)]
-     [(frontend 1-65535)
-      (backend 1-65535)])
-    (backend
-     [(backend 1-65535)]
-     [(backend 1-65535)
-      (any 22)])]
-   [(a frontend) (b backend) (c frontend)]))
+   [('frontend
+     [('frontend 1-65535)
+     (world 22)]
+     [('frontend 1-65535)
+      ('backend 1-65535)])
+    ('backend
+     [('backend 1-65535)]
+     [('backend 1-65535)
+      (world 22)])]
+   [('a 'frontend) ('b 'backend) ('c 'frontend)]))
