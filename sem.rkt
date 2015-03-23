@@ -1,11 +1,12 @@
 #lang s-exp rosette
-(provide acl
+#;(provide acl
          acl-list
          secgroup
          config
          check-direct-connection
          test-config
  )
+(provide (all-defined-out))
 
 ;;----------------------------------------------------------------------------------------------------------------------------------
 (require rosette/solver/smt/z3 rosette/solver/kodkod/kodkod (only-in racket new string-split string->number symbol->string error))
@@ -81,31 +82,86 @@
     [(eq? grant world) #t]
     [else (eq? grant group)]))
 
-(define (acls-allows-group acls group port)
+(define (acl-allows-group acl group port)
+  (-> acl-struct? symbol? boolean?)
+  (let*
+     [(grant (acl-struct-grants acl))
+      (port-low (car (acl-struct-port-range acl)))
+      (port-high (cdr (acl-struct-port-range acl)))]
+      (and (grant-group-eq? grant group) (<= port-low port) (<= port port-high))))
+
+(define (acl-allows-port acl port)
+  (-> acl-struct? symbol? boolean?)
+  (let*
+     [(port-low (car (acl-struct-port-range acl)))
+      (port-high (cdr (acl-struct-port-range acl)))]
+      (and (<= port-low port) (<= port port-high))))
+
+(define (acls-allow-group acls group port)
   (-> list? symbol? number? boolean?)
   (cond
     [(empty? acls) #f]
     [else 
-     (let*
-        [(grant (acl-struct-grants (car acls)))
-         (port-low (car (acl-struct-port-range (car acls))))
-         (port-high (cdr (acl-struct-port-range (car acls))))]
        (cond
-         [(and (grant-group-eq? grant group) (<= port-low port) (<= port port-high)) #t]
-         [else (acls-allows-group (cdr acls) group port)]))]))
+         [(acl-allows-group (car acls) group port) #t]
+         [else (acls-allow-group (cdr acls) group port)])]))
+
+(define (check-direct-connection-sg configuration srcsg destsg port)
+  (-> config-struct? symbol? symbol? number? boolean?)
+  (let* 
+      [(secgroups (config-struct-secgroups configuration))
+       (m1outbound (sg-struct-outbound (hash-ref secgroups srcsg)))
+       (m2inbound (sg-struct-inbound (hash-ref secgroups destsg)))]
+    (and (acls-allow-group m1outbound destsg port)
+         (acls-allow-group m2inbound srcsg port))))
+
+(define (all-accessible-groups configuration group port)
+  (-> config-struct? symbol? number? boolean?)
+  (let*
+    [(secgroups (config-struct-secgroups configuration))
+     (inbound (sg-struct-inbound (hash-ref secgroups group)))
+     (inbound-allowed (map acl-struct-grants (filter (curryr acl-allows-port port) inbound)))
+     (outbound-rules (map (lambda (sg) (cons sg (sg-struct-outbound (hash-ref secgroups sg)))) inbound-allowed))
+     (outbound-allowed (filter (lambda (p) (acls-allow-group (cdr p) group port)) outbound-rules))
+     (outbound-clean (map (lambda (p) (car p)) outbound-allowed))]
+   outbound-clean))
 
 ;; Check if one can directly connect between two machines
 (define (check-direct-connection configuration machine1 machine2 port)
   (-> config-struct? symbol? symbol? number? boolean?)
   (let* 
       [(machinegroups (config-struct-vms configuration))
-       (secgroups (config-struct-secgroups configuration))
        (m1secgroup (instance-struct-group (hash-ref machinegroups machine1 (instance machine1 world))))
-       (m2secgroup (instance-struct-group (hash-ref machinegroups machine2 (instance machine2 world))))
-       (m1outbound (sg-struct-outbound (hash-ref secgroups m1secgroup)))
-       (m2inbound (sg-struct-inbound (hash-ref secgroups m2secgroup)))]
-    (and (acls-allows-group m1outbound m2secgroup port)
-         (acls-allows-group m2inbound m1secgroup port))))
+       (m2secgroup (instance-struct-group (hash-ref machinegroups machine2 (instance machine2 world))))]
+      (check-direct-connection-sg configuration m1secgroup m2secgroup port)))
+
+
+
+(define (check-indirect-connection-internal configuration srcSG targetSG port explored)
+  (-> config-struct? symbol? symbol? number? list? boolean?)
+  (cond
+    [(check-direct-connection-sg configuration srcSG targetSG port) #t]
+    [else
+      (let*
+        [(connected-targets (all-accessible-groups configuration targetSG port))
+         (new-explored (remove-duplicates (append explored connected-targets)))
+         (to-explore (filter (compose not (curryr member explored)) connected-targets))
+         (explore-result (map (lambda (target) 
+                                (check-indirect-connection-internal configuration srcSG target port new-explored))
+                              to-explore))]
+        (not (empty? (filter identity explore-result))))]))
+
+(define (check-indirect-connection configuration src target port)
+  (-> config-struct? symbol? symbol? number? boolean?)
+  (let*
+    [(machinegroups (config-struct-vms configuration))
+     (srcSG (instance-struct-group (hash-ref machinegroups src (instance src world))))
+     (targetSG (instance-struct-group (hash-ref machinegroups target (instance target world))))]
+    (cond 
+      [(check-direct-connection-sg configuration srcSG targetSG port) #t]
+      [else (check-indirect-connection-internal configuration srcSG targetSG port (list srcSG targetSG))])))
+
+  
 
 
 (define test-config 
@@ -120,3 +176,37 @@
      [('backend 1-65535)
       (world 22)])]
    [('a 'frontend) ('b 'backend) ('c 'frontend)]))
+
+(define test-config2
+  (config
+   [('frontend
+     [('frontend 1-65535)
+     (world 22)]
+     [('frontend 1-65535)
+      ('backend 1-65535)])
+    ('backend
+     [('backend 1-65535)
+      ('frontend 1-65535)]
+     [('backend 1-65535)
+      (world 22)])]
+   [('a 'frontend) ('b 'backend) ('c 'frontend)]))
+
+
+(define test-config3
+  (config
+    [('sg1
+      [('sg1 1-65535)
+       ('sg2 1-65535)]
+      [('sg1 1-65535)])
+     ('sg2
+      [('sg2 1-65535)
+       ('sg3 1-65535)]
+      [('sg1 1-65535)
+       ('sg2 1-65535)])
+     ('sg3
+      [(world 22)
+       (world 80)
+       ('sg3 1-65535)]
+      [('sg2 1-65535)
+       ('sg3 1-65535)])]
+    [('a 'sg1) ('b 'sg2) ('c 'sg3)]))
