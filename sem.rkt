@@ -4,7 +4,10 @@
          secgroup
          config
          check-direct-connection
+         check-indirect-connection
          test-config
+         test-config2
+         test-config3
  )
 (provide (all-defined-out))
 
@@ -126,16 +129,8 @@
      (outbound-clean (map (lambda (p) (car p)) outbound-allowed))]
    outbound-clean))
 
-;; Check if one can directly connect between two machines
-(define (check-direct-connection configuration machine1 machine2 port)
-  (-> config-struct? symbol? symbol? number? boolean?)
-  (let* 
-      [(machinegroups (config-struct-vms configuration))
-       (m1secgroup (instance-struct-group (hash-ref machinegroups machine1 (instance machine1 world))))
-       (m2secgroup (instance-struct-group (hash-ref machinegroups machine2 (instance machine2 world))))]
-      (check-direct-connection-sg configuration m1secgroup m2secgroup port)))
-
-
+(define (machine-exists? configuration secgroup)
+  (member secgroup (remove-duplicates (map instance-struct-group (hash-values (config-struct-vms configuration))))))
 
 (define (check-indirect-connection-internal configuration srcSG targetSG port explored)
   (-> config-struct? symbol? symbol? number? list? boolean?)
@@ -145,12 +140,23 @@
       (let*
         [(connected-targets (all-accessible-groups configuration targetSG port))
          (new-explored (remove-duplicates (append explored connected-targets)))
-         (to-explore (filter (compose not (curryr member explored)) connected-targets))
+         (to-explore (filter (curry machine-exists? configuration) 
+                             (filter (compose not (curryr member explored)) connected-targets)))
          (explore-result (map (lambda (target) 
                                 (check-indirect-connection-internal configuration srcSG target port new-explored))
                               to-explore))]
         (not (empty? (filter identity explore-result))))]))
 
+;; Check if one can directly connect between two machines
+(define (check-direct-connection configuration machine1 machine2 port)
+  (-> config-struct? symbol? symbol? number? boolean?)
+  (let* 
+      [(machinegroups (config-struct-vms configuration))
+       (m1secgroup (instance-struct-group (hash-ref machinegroups machine1 (instance machine1 world))))
+       (m2secgroup (instance-struct-group (hash-ref machinegroups machine2 (instance machine2 world))))]
+      (check-direct-connection-sg configuration m1secgroup m2secgroup port)))
+
+;; Check if one can indirectly connect between two machines
 (define (check-indirect-connection configuration src target port)
   (-> config-struct? symbol? symbol? number? boolean?)
   (let*
@@ -210,3 +216,22 @@
       [('sg2 1-65535)
        ('sg3 1-65535)])]
     [('a 'sg1) ('b 'sg2) ('c 'sg3)]))
+
+(define test-config4
+  (config
+    [('sg1
+      [('sg1 1-65535)
+       ('sg2 1-65535)]
+      [('sg1 1-65535)])
+     ('sg2
+      [('sg2 1-65535)
+       ('sg3 1-65535)]
+      [('sg1 1-65535)
+       ('sg2 1-65535)])
+     ('sg3
+      [(world 22)
+       (world 80)
+       ('sg3 1-65535)]
+      [('sg2 1-65535)
+       ('sg3 1-65535)])]
+    [('a 'sg1) ('c 'sg3)]))
