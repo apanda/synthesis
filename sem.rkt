@@ -12,7 +12,8 @@
 (provide (all-defined-out))
 
 ;;----------------------------------------------------------------------------------------------------------------------------------
-(require rosette/solver/smt/z3 rosette/solver/kodkod/kodkod (only-in racket new string-split string->number symbol->string error))
+(require rosette/solver/smt/z3 rosette/solver/kodkod/kodkod
+         (only-in racket new string-split string->number symbol->string error number->string string-append))
 (current-solver (new kodkod%)) ;Want minimal extraction for now?
 
 (struct acl-struct (grants ; symbol
@@ -65,7 +66,8 @@
 
 (define-syntax-rule 
   (config [(group inbound outbound) ...] [(name sg) ...])
-  (config-struct (apply hash (flatten (zip (list world group ...) (list world-secgroup (secgroup group inbound outbound) ...))))
+  (config-struct (apply hash (flatten (zip (list world group ...)
+                                           (list world-secgroup (secgroup group inbound outbound) ...))))
                  (apply hash (flatten (zip (list name ...) (list (instance name sg) ...))))))
 
 ;;---------------------------------------------------------------------------------------------------------------------------------------------------
@@ -167,9 +169,110 @@
       [(check-direct-connection-sg configuration srcSG targetSG port) #t]
       [else (check-indirect-connection-internal configuration srcSG targetSG port (list srcSG targetSG))])))
 
-  
+(define (should-modify configuration)
+  (let*
+      [(new-symbolic (lambda () (define-symbolic* x boolean?) x))]
+    (zip (hash-keys (config-struct-secgroups configuration))
+         (map (lambda (i) (new-symbolic)) (range 0 (length (hash-keys (config-struct-secgroups configuration)))))
+         (map (lambda (i) (new-symbolic)) (range 0 (length (hash-keys (config-struct-secgroups configuration))))))))
 
+(define (get-secgroup configuration idx)
+  (let*
+      [(sg-names (hash-keys (config-struct-secgroups configuration)))]
+    (list-ref sg-names idx)))
 
+(define (symbolic-get-secgroup configuration idx-symb)
+  (let*
+      [(sg-names (hash-keys (config-struct-secgroups configuration)))]
+    (assert (< idx-symb (length sg-names))))
+  (assert (<= 0 idx-symb))
+  (get-secgroup configuration idx-symb))
+
+(define (add-inbound-acl configuration sg rule)
+  (-> config-struct? config-struct?)
+  (let*
+      [(secgroups (config-struct-secgroups configuration))
+       (instances (config-struct-vms configuration))]
+    (config-struct
+    (hash-update secgroups sg 
+                 (lambda (s)  
+                   (sg-struct (sg-struct-name s)
+                              (cons rule (sg-struct-inbound s))
+                              (sg-struct-outbound s))))
+    instances)))
+     
+(define (add-outbound-acl configuration sg rule)
+  (-> config-struct? config-struct?)
+  (let*
+      [(secgroups (config-struct-secgroups configuration))
+       (instances (config-struct-vms configuration))]
+    (config-struct
+    (hash-update secgroups sg 
+                 (lambda (s)  
+                   (sg-struct (sg-struct-name s)
+                              (sg-struct-inbound s)
+                              (cons rule (sg-struct-outbound s)))))
+    instances)))
+
+(define (new-symbolic-acl configuration)
+  (-> config-struct? acl-struct?)
+  (let* [(new-symbolic-sg (lambda () (define-symbolic* group number?) group))
+         (new-symbolic-port (lambda () (define-symbolic* port number?) port))
+         (secgroup (symbolic-get-secgroup configuration (new-symbolic-sg)))
+         (portLow (new-symbolic-port))
+         (portHigh (new-symbolic-port))]
+    (acl secgroup portLow - portHigh)))
+
+(define (symbolic-configuration-change configuration)
+  (-> config-struct? config-struct?)
+  (let* [(modify-config (should-modify configuration))]
+    (displayln modify-config)
+    (foldl
+     (lambda (modify cfg)
+       (let* [(sgname (car modify))
+              (i-mod (cadr modify))
+              (o-mod (caddr modify))
+              (mod-i (if i-mod (add-inbound-acl cfg sgname (new-symbolic-acl cfg)) cfg))
+              (mod-o (if o-mod (add-outbound-acl mod-i sgname (new-symbolic-acl mod-i)) mod-i))]
+         mod-o)) configuration modify-config)))
+
+#;(define (symbolic-configuration configuration)
+  (-> config-struct? config-struct?)
+  (let* [(new-symbolic-boolean (lambda () (define-symbolic* x boolean?) x))
+         (sec-group-list (hash->list (config-struct-secgroups configuration)))
+         (modsg 
+          (map (lambda pr 
+                 (let* [(sgname (car pr))
+                        (sg (cdr pr))
+                        (inbound (sg-struct-inbound sg))
+                        (outbound (sg-struct-outbound sg))
+                        (mod-i (if (new-symbolic-boolean) 
+                                   (cons (new-symbolic-acl configuration) inbound) inbound))
+                        (mod-o (if (new-symbolic-boolean)
+                                   (cons (new-symbolic-acl configuration) outbound) outbound))]
+                   (cons sgname (sg-struct sgname mod-i mod-o)))) sec-group-list))
+         (vms (config-struct-vms configuration))]
+    (flatten modsg)))
+
+(define (symbolic-configuration configuration)
+  (-> config-struct? config-struct?)
+  (let* [(new-symbolic-boolean (lambda () (define-symbolic* x boolean?) x))
+         (sec-group-list (hash->list (config-struct-secgroups configuration)))
+         (modsg 
+          (map (lambda pr 
+                 (let* [(sgname (caar pr))
+                        (sg (cdar pr))
+                        (in (sg-struct-inbound sg))
+                        (out (sg-struct-outbound sg))
+                        (mod-in (if (new-symbolic-boolean) (cons (new-symbolic-acl configuration) in) in))
+                        (mod-out (if (new-symbolic-boolean) (cons (new-symbolic-acl configuration) out) out))
+                        (nsg (sg-struct sgname mod-in mod-out))
+                        (nl (cons sgname nsg))]
+                   nl)) sec-group-list))
+         (vms (config-struct-vms configuration))]
+    (config-struct (apply hash (flatten modsg)) vms)))
+
+;;---------------------------------------------------------------------------------------------------------------
 (define test-config 
   (config
    [('frontend
