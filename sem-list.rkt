@@ -14,7 +14,7 @@
 ;;----------------------------------------------------------------------------------------------------------------------------------
 (require rosette/solver/smt/z3 rosette/solver/kodkod/kodkod
          (only-in racket new string-split string->number symbol->string error number->string string-append))
-(current-solver (new z3%)) ;Want minimal extraction for now?
+(current-solver (new kodkod%)) ;Want minimal extraction for now?
 
 (struct acl-struct (grants ; symbol
                     port-range) ;pair of ints
@@ -29,8 +29,8 @@
                    outbound) ;list of ACLs
   #:transparent)
 
-(struct config-struct (secgroups ;Hash of sg-struct
-                       vms) ;Hash of vm-struct
+(struct config-struct (secgroups ;List of sg-struct
+                       vms) ;List of vm-struct
   #:transparent)
 
 ;;----------------------------------------------------------------------------------------------------------------------------------------------
@@ -66,9 +66,9 @@
 
 (define-syntax-rule 
   (config [(group inbound outbound) ...] [(name sg) ...])
-  (config-struct (apply hash (flatten (zip (list world group ...)
-                                           (list world-secgroup (secgroup group inbound outbound) ...))))
-                 (apply hash (flatten (zip (list name ...) (list (instance name sg) ...))))))
+  (config-struct (zip (list world group ...)
+                                           (list world-secgroup (secgroup group inbound outbound) ...))
+                 (zip (list name ...) (list (instance name sg) ...))))
 
 ;;---------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -77,7 +77,15 @@
 (define world-secgroup 
   (secgroup world [(world 1-65535)] [(world 1-65535)]))
 
+(define (sg-ref secgroups key [default #f])
+  (let* [(filtered-list (filter (lambda (tup) (eq? (car tup) key)) secgroups))]
+    (if (empty? filtered-list) default (cadar filtered-list))))
 
+(define (sg-keys secgroups)
+  (map car secgroups))
+
+(define (sg-values secgroups)
+  (map cadr secgroups))
 
 ;; --------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -115,8 +123,8 @@
   (-> config-struct? symbol? symbol? number? boolean?)
   (let* 
       [(secgroups (config-struct-secgroups configuration))
-       (m1outbound (sg-struct-outbound (hash-ref secgroups srcsg)))
-       (m2inbound (sg-struct-inbound (hash-ref secgroups destsg)))]
+       (m1outbound (sg-struct-outbound (sg-ref secgroups srcsg)))
+       (m2inbound (sg-struct-inbound (sg-ref secgroups destsg)))]
     (and (acls-allow-group m1outbound destsg port)
          (acls-allow-group m2inbound srcsg port))))
 
@@ -124,15 +132,15 @@
   (-> config-struct? symbol? number? boolean?)
   (let*
     [(secgroups (config-struct-secgroups configuration))
-     (inbound (sg-struct-inbound (hash-ref secgroups group)))
+     (inbound (sg-struct-inbound (sg-ref secgroups group)))
      (inbound-allowed (map acl-struct-grants (filter (curryr acl-allows-port port) inbound)))
-     (outbound-rules (map (lambda (sg) (cons sg (sg-struct-outbound (hash-ref secgroups sg)))) inbound-allowed))
+     (outbound-rules (map (lambda (sg) (cons sg (sg-struct-outbound (sg-ref secgroups sg)))) inbound-allowed))
      (outbound-allowed (filter (lambda (p) (acls-allow-group (cdr p) group port)) outbound-rules))
      (outbound-clean (map (lambda (p) (car p)) outbound-allowed))]
    outbound-clean))
 
 (define (machine-exists? configuration secgroup)
-  (member secgroup (remove-duplicates (map instance-struct-group (hash-values (config-struct-vms configuration))))))
+  (member secgroup (remove-duplicates (map instance-struct-group (sg-values (config-struct-vms configuration))))))
 
 (define (check-indirect-connection-internal configuration srcSG targetSG port explored)
   (-> config-struct? symbol? symbol? number? list? boolean?)
@@ -154,8 +162,8 @@
   (-> config-struct? symbol? symbol? number? boolean?)
   (let* 
       [(machinegroups (config-struct-vms configuration))
-       (m1secgroup (instance-struct-group (hash-ref machinegroups machine1 (instance machine1 world))))
-       (m2secgroup (instance-struct-group (hash-ref machinegroups machine2 (instance machine2 world))))]
+       (m1secgroup (instance-struct-group (sg-ref machinegroups machine1 (instance machine1 world))))
+       (m2secgroup (instance-struct-group (sg-ref machinegroups machine2 (instance machine2 world))))]
       (check-direct-connection-sg configuration m1secgroup m2secgroup port)))
 
 ;; Check if one can indirectly connect between two machines
@@ -163,8 +171,8 @@
   (-> config-struct? symbol? symbol? number? boolean?)
   (let*
     [(machinegroups (config-struct-vms configuration))
-     (srcSG (instance-struct-group (hash-ref machinegroups src (instance src world))))
-     (targetSG (instance-struct-group (hash-ref machinegroups target (instance target world))))]
+     (srcSG (instance-struct-group (sg-ref machinegroups src (instance src world))))
+     (targetSG (instance-struct-group (sg-ref machinegroups target (instance target world))))]
     (cond 
       [(check-direct-connection-sg configuration srcSG targetSG port) #t]
       [else (check-indirect-connection-internal configuration srcSG targetSG port (list srcSG targetSG))])))
@@ -174,7 +182,7 @@
 (define (get-secgroup groups idx)
   (list-ref groups idx))
 ;  (let*
-;      [(sg-names (hash-keys (config-struct-secgroups configuration)))]
+;      [(sg-names (sg-keys (config-struct-secgroups configuration)))]
 ;    (list-ref sg-names idx)))
 
 (define (symbolic-get-secgroup groups idx-symb)
@@ -184,46 +192,42 @@
 
 (define (new-symbolic-acl groups)
   (-> config-struct? acl-struct?)
-  (let* [(new-symbolic-sg (lambda () (define-symbolic* gr number?) gr))
-         (new-symbolic-port (lambda () (define-symbolic* pt number?) pt))
+  (let* [(new-symbolic-sg (lambda () (define-symbolic* g number?) g))
+         (new-symbolic-port (lambda () (define-symbolic* p number?) p))
          (secgroup (symbolic-get-secgroup groups (new-symbolic-sg)))
-         (port (new-symbolic-port))]
+         (port (new-symbolic-port))
+         (portHigh (new-symbolic-port))]
     (assert (> port 0))
     (assert (<= port 65535))
-;    (assert (> portHigh 0))
-;    (assert (<= portHigh 65535))
-;    (assert (<= portLow portHigh))
-    (acl secgroup port)))
+    (assert (> portHigh 0))
+    (assert (<= portHigh 65535))
+    (assert (<= port portHigh))
+    (acl secgroup port - portHigh)))
 
 (define (symbolic-configuration-change configuration groups)
   (-> config-struct? config-struct?)
   (let* [(new-symbolic-boolean (lambda () (define-symbolic* x boolean?) x))
-         (sec-group-list (hash->list (config-struct-secgroups configuration)))
+         (sec-group-list (config-struct-secgroups configuration))
          (modsg 
           (map (lambda (pr) 
                  (let* [(sgname (car pr))
-                        (sg (cdr pr))
+                        (sg (cadr pr))
                         (in (sg-struct-inbound sg))
                         (out (sg-struct-outbound sg))
                         (mod-in (if (new-symbolic-boolean) (cons (new-symbolic-acl groups) in) in))
                         (mod-out (if (new-symbolic-boolean) (cons (new-symbolic-acl groups) out) out))
                         (nsg (sg-struct sgname mod-in mod-out))
-                        (nl (cons sgname nsg))]
+                        (nl (list sgname nsg))]
                    nl)) sec-group-list))
          (vms (config-struct-vms configuration))]
-    (config-struct (apply hash (flatten modsg)) vms)))
+    (config-struct modsg vms)))
 
 (define (concretize-configuration configuration solution)
   (-> config-struct? config-struct?)
-  (let* [(symbolic-sglist (hash->list (config-struct-secgroups configuration)))
-         (concrete-sglist
-          (map (lambda (s) (evaluate s solution)) symbolic-sglist))
-         (concrete-hashmap (apply hash (flatten concrete-sglist)))
-         (vms (config-struct-vms configuration))]
-    (config-struct concrete-hashmap vms)))
+  (evaluate configuration solution))
 
 (define (fix-indirect-connection configuration src dest port)
-  (let* [(groups (hash-keys (config-struct-secgroups configuration)))
+  (let* [(groups (sg-keys (config-struct-secgroups configuration)))
          (ext-config (symbolic-configuration-change configuration groups))
          (sol (solve (assert (check-indirect-connection ext-config src dest port))))]
     (concretize-configuration ext-config sol)))
@@ -293,4 +297,4 @@
        ('sg3 1-65535)]
       [('sg2 1-65535)
        ('sg3 1-65535)])]
-    [('a 'sg1) ('c 'sg3)]))
+    [('a 'sg1) ('b world) ('c 'sg3)]))
