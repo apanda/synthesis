@@ -1,14 +1,4 @@
 #lang s-exp rosette
-#;(provide acl
-         acl-list
-         secgroup
-         config
-         check-direct-connection
-         check-indirect-connection
-         test-config
-         test-config2
-         test-config3
- )
 (provide (all-defined-out))
 
 ;;----------------------------------------------------------------------------------------------------------------------------------
@@ -16,6 +6,7 @@
          (only-in racket new string-split string->number symbol->string error number->string string-append))
 (current-solver (new kodkod%)) ;Want minimal extraction for now?
 
+;; Structures 
 (struct acl-struct (grants ; symbol
                     port-range) ;pair of ints
   #:transparent)
@@ -35,6 +26,7 @@
 
 ;;----------------------------------------------------------------------------------------------------------------------------------------------
 
+;; Some utility functions
 (define (zip . lists) (apply map list lists))
 
 (define (instance name group) (instance-struct name group))
@@ -50,6 +42,10 @@
               [else (error "Don't know how to interpret port")]
               ))]))
 
+;;------------------------------------------------------------------------------------------------------------------------------------------------
+;; Syntactic sugar
+
+;; Only the dashed syntax works in this case.
 (define-syntax acl
   (syntax-rules (-)
     [(acl grant start - end) (acl-struct grant (cons start end))]
@@ -77,6 +73,8 @@
 (define world-secgroup 
   (secgroup world [(world 1-65535)] [(world 1-65535)]))
 
+;; Try without hash sets
+
 (define (sg-ref secgroups key [default #f])
   (let* [(filtered-list (filter (lambda (tup) (eq? (car tup) key)) secgroups))]
     (if (empty? filtered-list) default (cadar filtered-list))))
@@ -89,12 +87,14 @@
 
 ;; --------------------------------------------------------------------------------------------------------------------------------------------------
 
+;; Are two groups the same
 (define (grant-group-eq? grant group)
   (-> symbol? symbol? boolean?)
   (cond
     [(eq? grant world) #t]
     [else (eq? grant group)]))
 
+;; Does a particular ACL allow a group
 (define (acl-allows-group acl group port)
   (-> acl-struct? symbol? boolean?)
   (let*
@@ -103,6 +103,7 @@
       (port-high (cdr (acl-struct-port-range acl)))]
       (and (grant-group-eq? grant group) (<= port-low port) (<= port port-high))))
 
+;; Does any of a list of ACLs allow a group
 (define (acl-allows-port acl port)
   (-> acl-struct? symbol? boolean?)
   (let*
@@ -231,6 +232,13 @@
          (ext-config (symbolic-configuration-change configuration groups))
          (sol (solve (assert (check-indirect-connection ext-config src dest port))))]
     (concretize-configuration ext-config sol)))
+
+(define (fix-direct-connection configuration src dest port)
+  (let* [(groups (sg-keys (config-struct-secgroups configuration)))
+         (ext-config (symbolic-configuration-change configuration groups))
+         (sol (solve (assert (check-direct-connection ext-config src dest port))))]
+    (concretize-configuration ext-config sol)))
+
 
 ;;---------------------------------------------------------------------------------------------------------------
 (define test-config 
