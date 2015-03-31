@@ -182,9 +182,6 @@
 
 (define (get-secgroup groups idx)
   (list-ref groups idx))
-;  (let*
-;      [(sg-names (sg-keys (config-struct-secgroups configuration)))]
-;    (list-ref sg-names idx)))
 
 (define (symbolic-get-secgroup groups idx-symb)
   (assert (< idx-symb (length groups)))
