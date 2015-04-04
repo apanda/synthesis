@@ -7,7 +7,7 @@
 (current-solver (new kodkod%)) ;Want minimal extraction for now?
 
 ;; Structures 
-(struct acl-struct (grants ; symbol
+(struct acl-struct (grants ; symbol-
                     port-range) ;pair of ints
   #:transparent)
 
@@ -89,14 +89,14 @@
 
 ;; Are two groups the same
 (define (grant-group-eq? grant group)
-  (-> symbol? symbol? boolean?)
+  ;(-> symbol? symbol? boolean?)
   (cond
     [(eq? grant world) #t]
     [else (eq? grant group)]))
 
 ;; Does a particular ACL allow a group
 (define (acl-allows-group acl group port)
-  (-> acl-struct? symbol? boolean?)
+  ;(-> acl-struct? symbol? boolean?)
   (let*
      [(grant (acl-struct-grants acl))
       (port-low (car (acl-struct-port-range acl)))
@@ -105,14 +105,14 @@
 
 ;; Does any of a list of ACLs allow a group
 (define (acl-allows-port acl port)
-  (-> acl-struct? symbol? boolean?)
+  ;(-> acl-struct? symbol? boolean?)
   (let*
      [(port-low (car (acl-struct-port-range acl)))
       (port-high (cdr (acl-struct-port-range acl)))]
       (and (<= port-low port) (<= port port-high))))
 
 (define (acls-allow-group acls group port)
-  (-> list? symbol? number? boolean?)
+  ;(-> list? symbol? number? boolean?)
   (cond
     [(empty? acls) #f]
     [else 
@@ -121,7 +121,7 @@
          [else (acls-allow-group (cdr acls) group port)])]))
 
 (define (check-direct-connection-sg configuration srcsg destsg port)
-  (-> config-struct? symbol? symbol? number? boolean?)
+  ;(-> config-struct? symbol? symbol? number? boolean?)
   (let* 
       [(secgroups (config-struct-secgroups configuration))
        (m1outbound (sg-struct-outbound (sg-ref secgroups srcsg)))
@@ -130,7 +130,7 @@
          (acls-allow-group m2inbound srcsg port))))
 
 (define (all-accessible-groups configuration group port)
-  (-> config-struct? symbol? number? boolean?)
+  ;(-> config-struct? symbol? number? boolean?)
   (let*
     [(secgroups (config-struct-secgroups configuration))
      (inbound (sg-struct-inbound (sg-ref secgroups group)))
@@ -144,7 +144,7 @@
   (member secgroup (remove-duplicates (map instance-struct-group (sg-values (config-struct-vms configuration))))))
 
 (define (check-indirect-connection-internal configuration srcSG targetSG port explored)
-  (-> config-struct? symbol? symbol? number? list? boolean?)
+  ;(-> config-struct? symbol? symbol? number? list? boolean?)
   (cond
     [(check-direct-connection-sg configuration srcSG targetSG port) #t]
     [else
@@ -160,7 +160,7 @@
 
 ;; Check if one can directly connect between two machines
 (define (check-direct-connection configuration machine1 machine2 port)
-  (-> config-struct? symbol? symbol? number? boolean?)
+  ;(-> config-struct? symbol? symbol? number? boolean?)
   (let* 
       [(machinegroups (config-struct-vms configuration))
        (m1secgroup (instance-struct-group (sg-ref machinegroups machine1 (instance machine1 world))))
@@ -169,7 +169,7 @@
 
 ;; Check if one can indirectly connect between two machines
 (define (check-indirect-connection configuration src target port)
-  (-> config-struct? symbol? symbol? number? boolean?)
+  ;(-> config-struct? symbol? symbol? number? boolean?)
   (let*
     [(machinegroups (config-struct-vms configuration))
      (srcSG (instance-struct-group (sg-ref machinegroups src (instance src world))))
@@ -189,7 +189,7 @@
   (get-secgroup groups idx-symb))
 
 (define (new-symbolic-acl groups)
-  (-> config-struct? acl-struct?)
+  ;(-> config-struct? acl-struct?)
   (let* [(new-symbolic-sg (lambda () (define-symbolic* g number?) g))
          (new-symbolic-port (lambda () (define-symbolic* p number?) p))
          (secgroup (symbolic-get-secgroup groups (new-symbolic-sg)))
@@ -203,7 +203,7 @@
     (acl secgroup port - portHigh)))
 
 (define (symbolic-configuration-change configuration groups)
-  (-> config-struct? config-struct?)
+  ;(-> config-struct? config-struct?)
   (let* [(new-symbolic-boolean (lambda () (define-symbolic* x boolean?) x))
          (sec-group-list (config-struct-secgroups configuration))
          (modsg 
@@ -221,7 +221,7 @@
     (config-struct modsg vms)))
 
 (define (concretize-configuration configuration solution)
-  (-> config-struct? config-struct?)
+  ;(-> config-struct? config-struct?)
   (evaluate configuration solution))
 
 (define (fix-indirect-connection configuration src dest port)
