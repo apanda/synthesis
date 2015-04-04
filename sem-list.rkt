@@ -303,3 +303,11 @@
       [('sg2 1-65535)
        ('sg3 1-65535)])]
     [('a 'sg1) ('b world) ('c 'sg3)]))
+
+;; Test code
+(define secgroups (config-struct-secgroups test-config4))
+(define m1outbound (sg-struct-outbound (sg-ref secgroups 'any)))
+(define-symbolic* group boolean?)
+(define groups (sg-keys secgroups))
+(define m1mod (if group (cons (new-symbolic-acl groups) m1outbound) m1outbound))
+(acls-allow-group m1mod 'sg1 22)
