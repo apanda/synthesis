@@ -5,6 +5,7 @@
 (require rosette/solver/smt/z3 rosette/solver/kodkod/kodkod
          (only-in racket new string-split string->number symbol->string error number->string string-append))
 (current-solver (new kodkod%)) ;Want minimal extraction for now?
+(current-bitwidth 24)
 
 ;; Structures 
 (struct acl-struct (grants ; symbol-
@@ -310,4 +311,7 @@
 (define-symbolic* group boolean?)
 (define groups (sg-keys secgroups))
 (define m1mod (if group (cons (new-symbolic-acl groups) m1outbound) m1outbound))
+(displayln "Just running acls-allow-group")
 (acls-allow-group m1mod 'sg1 22)
+(displayln "solve assert acls-allow-group")
+(solve (assert (acls-allow-group m1mod 'sg1 22)))
